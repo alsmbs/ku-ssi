@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, doc, setDoc, onSnapshot, collection } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc } from 'firebase/firestore';
 import { 
   Play, CheckCircle, MonitorUp, Smartphone, Settings, AlertCircle, 
   DollarSign, LogOut, BarChart3, Download, Users, TrendingUp, Trophy, 
-  ChevronRight, Building2, Presentation, Loader2, Activity,
+  ChevronRight, Building2, Presentation, Loader2, Activity, RefreshCw, Trash2, LayoutDashboard,
   UserCheck, ChevronDown, ChevronUp, FileText, Eye, Calculator, PieChart, Clock, Pause, Square, CheckSquare, Edit3
 } from 'lucide-react';
 
@@ -38,7 +38,7 @@ const DEFAULT_TEAMS = [
 ];
 
 const ATTRACT_OPTIONS = [
-  { id: 'impact', label: '명확하고 시급한 사회 문제 해결 (소셜 임팩트)' },
+  { id: 'impact', label: '명확하고 시급한 사회 문제 해결' },
   { id: 'innovation', label: '기존 대안 대비 압도적인 차별성 및 혁신성' },
   { id: 'profit', label: '현실적이고 확장 가능한 비즈니스/수익 모델' },
   { id: 'market', label: '타겟 고객의 니즈와 시장 분석의 타당성' },
@@ -75,14 +75,28 @@ export default function App() {
   );
   
   const [finalInvestments, setFinalInvestments] = useState({ 1:0, 2:0, 3:0, 4:0, 5:0, 6:0, 7:0, 8:0, 9:0 });
-  
-  // 1위 팀 선정을 위한 상태 추가
   const [absoluteFirstTeam, setAbsoluteFirstTeam] = useState(null);
   const [firstTeamReason, setFirstTeamReason] = useState('');
   const [finalAttractiveness, setFinalAttractiveness] = useState(
     ATTRACT_OPTIONS.reduce((acc, opt) => ({ ...acc, [opt.id]: false }), {})
   );
   const [isSubmitted, setIsSubmitted] = useState(false);
+
+  // 커스텀 모달 (경고창 제한 우회)
+  const [modal, setModal] = useState({ show: false, type: '', targetId: null, targetName: '', message: '' });
+
+  // === [페이퍼로지 폰트 적용] ===
+  useEffect(() => {
+    const style = document.createElement('style');
+    style.innerHTML = `
+      @font-face { font-family: 'Paperlogy'; font-weight: 400; src: url('https://fastly.jsdelivr.net/gh/projectnoonnu/2408-3@1.0/Paperlogy-4Regular.woff2') format('woff2'); }
+      @font-face { font-family: 'Paperlogy'; font-weight: 700; src: url('https://fastly.jsdelivr.net/gh/projectnoonnu/2408-3@1.0/Paperlogy-7Bold.woff2') format('woff2'); }
+      @font-face { font-family: 'Paperlogy'; font-weight: 900; src: url('https://fastly.jsdelivr.net/gh/projectnoonnu/2408-3@1.0/Paperlogy-9Black.woff2') format('woff2'); }
+      * { font-family: 'Paperlogy', sans-serif !important; }
+    `;
+    document.head.appendChild(style);
+    return () => document.head.removeChild(style);
+  }, []);
 
   const studentList = useMemo(() => {
     let list = [];
@@ -105,9 +119,7 @@ export default function App() {
   // === [Firebase Auth] ===
   useEffect(() => {
     const initAuth = async () => {
-      try {
-        await signInAnonymously(auth);
-      } catch (err) {}
+      try { await signInAnonymously(auth); } catch (err) {}
     };
     initAuth();
     const unsubscribe = onAuthStateChanged(auth, setUser);
@@ -134,7 +146,12 @@ export default function App() {
       const subs = [];
       snapshot.forEach(doc => subs.push(doc.data()));
       setSubmissionsList(subs);
-      if (role === 'student' && studentInfo && subs.find(s => s.studentId === studentInfo.studentId)) setIsSubmitted(true);
+      
+      // 관리자에 의해 제출 내역이 초기화되었는지 실시간 감지하여 학생 화면 리셋
+      if (role === 'student' && studentInfo) {
+        const hasSubmitted = subs.find(s => s.studentId === studentInfo.studentId);
+        setIsSubmitted(!!hasSubmitted);
+      }
     });
 
     const unsubActive = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'active_users'), (snapshot) => {
@@ -146,7 +163,7 @@ export default function App() {
     return () => { unsubPhase(); unsubSubmissions(); unsubActive(); };
   }, [user, role, studentInfo, globalPhase]);
 
-  // === [타이머 로직 (관리자용)] ===
+  // === [타이머 로직] ===
   useEffect(() => {
     let interval;
     if (timerSync.isRunning) {
@@ -184,21 +201,21 @@ export default function App() {
     await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'admin_config', 'state'), { timer: newTimer }, { merge: true });
   };
 
-  // === [디바운싱 클라우드 자동 저장] ===
+  // === [디바운싱 클라우드 자동 저장 (현재 화면 위치 포함)] ===
   useEffect(() => {
     if (role === 'student' && studentInfo && !isSubmitted) {
       const timeoutId = setTimeout(async () => {
         try {
           await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'active_users', studentInfo.studentId), {
-            timestamp: new Date().toISOString(), evaluations, finalInvestments, finalAttractiveness, absoluteFirstTeam, firstTeamReason, connected: true
+            timestamp: new Date().toISOString(), evaluations, finalInvestments, finalAttractiveness, absoluteFirstTeam, firstTeamReason, 
+            currentPhase: localPhase, connected: true
           }, { merge: true });
         } catch(e) {}
       }, 800);
       return () => clearTimeout(timeoutId);
     }
-  }, [evaluations, finalInvestments, finalAttractiveness, absoluteFirstTeam, firstTeamReason, role, studentInfo, isSubmitted]);
+  }, [evaluations, finalInvestments, finalAttractiveness, absoluteFirstTeam, firstTeamReason, role, studentInfo, isSubmitted, localPhase]);
 
-  // Phase 10 진입 시 임시 금액 복사
   useEffect(() => {
     if (globalPhase === 10 && localPhase === 10 && role === 'student') {
       setFinalInvestments(prev => {
@@ -263,6 +280,28 @@ export default function App() {
       });
       setIsSubmitted(true); showToast('포트폴리오가 성공적으로 제출되었습니다.');
     } catch (error) { showToast("제출 오류 발생"); }
+  };
+
+  // === [초기화(리셋) 로직] ===
+  const confirmReset = async () => {
+    if (modal.type === 'STUDENT') {
+      try {
+        await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'submissions', modal.targetId));
+        await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'active_users', modal.targetId));
+        showToast(`${modal.targetName} 학생이 초기화되었습니다.`);
+      } catch (e) { showToast("오류가 발생했습니다."); }
+    } else if (modal.type === 'ALL') {
+      try {
+        for (const sub of submissionsList) {
+          await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'submissions', sub.studentId));
+        }
+        for (const [sId, _] of Object.entries(activeUsers)) {
+          await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'active_users', sId));
+        }
+        showToast('모든 평가 데이터가 초기화되었습니다.');
+      } catch (e) { showToast("오류가 발생했습니다."); }
+    }
+    setModal({ show: false, type: '', targetId: null, targetName: '', message: '' });
   };
 
   // === [환산 점수 재계산] ===
@@ -339,11 +378,9 @@ export default function App() {
   const finalTotal = Object.values(finalInvestments).reduce((a, b) => a + b, 0);
   const maxInvestment = Math.max(...Object.values(finalInvestments));
   
-  // 최고액 투자 팀 산출 (동점자 포함)
   const topTeams = Object.keys(finalInvestments).map(Number).filter(team => finalInvestments[team] === maxInvestment && maxInvestment > 0);
-  
-  // 유효한 최종 1위 팀 판별 (1팀이면 자동, 여러 팀이면 유저가 명시적으로 선택한 팀)
   const derivedFirstTeam = topTeams.length === 1 ? topTeams[0] : (topTeams.includes(absoluteFirstTeam) ? absoluteFirstTeam : null);
+  const topTeamsText = topTeams.length > 0 ? topTeams.map(t => `${t}팀`).join(', ') : '최고 투자 팀';
 
   const isFinalValid = finalTotal === TOTAL_BUDGET && 
     Object.values(finalInvestments).filter(v => v > 0).length >= 2 && 
@@ -352,10 +389,24 @@ export default function App() {
     derivedFirstTeam !== null && 
     firstTeamReason.trim().length > 0;
 
+  // 대시보드 통계 변수 계산
+  const totalCount = studentList.length;
+  const submittedCount = submissionsList.length;
+  let activeCount = 0;
+  studentList.forEach(s => {
+    const isSub = submissionsList.find(sub => sub.studentId === s.id);
+    const isActive = activeUsers[s.id];
+    // 30분 이내 활동 기록이 있으면 '접속중'으로 판단
+    if (!isSub && isActive?.timestamp && (Date.now() - new Date(isActive.timestamp).getTime() < 30 * 60 * 1000)) {
+      activeCount++;
+    }
+  });
+  const waitingCount = totalCount - submittedCount - activeCount;
+
   return (
-    <div className="min-h-screen bg-[#F4F4F4] font-sans text-gray-800 pb-10">
+    <div className="min-h-screen bg-[#F4F4F4] text-gray-800 pb-10">
       
-      {/* 헤더 */}
+      {/* 글로벌 헤더 */}
       <div className="bg-[#8A1538] text-white p-3 shadow-md flex justify-between items-center sticky top-0 z-50">
         <div className="flex items-center space-x-2 px-4">
           <Building2 className="w-6 h-6 text-[#B4975A]" />
@@ -367,8 +418,25 @@ export default function App() {
         </div>
       </div>
 
+      {/* 모달 팝업 */}
+      {modal.show && (
+        <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 animate-[slideDown_0.2s_ease-out]">
+            <div className="flex items-center text-red-600 mb-4">
+              <AlertCircle className="w-8 h-8 mr-2"/>
+              <h3 className="text-xl font-black">데이터 초기화 경고</h3>
+            </div>
+            <p className="text-gray-600 font-bold mb-6">{modal.message}</p>
+            <div className="flex gap-3">
+              <button onClick={() => setModal({show: false})} className="flex-1 py-3 bg-gray-100 text-gray-600 font-bold rounded-xl hover:bg-gray-200">취소</button>
+              <button onClick={confirmReset} className="flex-1 py-3 bg-red-600 text-white font-bold rounded-xl hover:bg-red-700 shadow-md">네, 초기화합니다</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {toastMessage && (
-        <div className="fixed top-20 left-1/2 transform -translate-x-1/2 z-[100] animate-[slideDown_0.3s_ease-out]">
+        <div className="fixed top-20 left-1/2 transform -translate-x-1/2 z-[90] animate-[slideDown_0.3s_ease-out]">
           <div className="bg-gray-800 text-white px-6 py-3 rounded-full shadow-2xl flex items-center font-bold text-sm"><CheckCircle className="w-4 h-4 mr-2 text-green-400" />{toastMessage}</div>
         </div>
       )}
@@ -397,7 +465,7 @@ export default function App() {
                 <div className="flex space-x-1 min-w-max">
                   <button onClick={() => setAdminTab('control')} className={`py-4 px-6 font-bold text-sm border-b-2 transition ${adminTab === 'control' ? 'border-[#8A1538] text-[#8A1538]' : 'border-transparent text-gray-500'}`}><Play className="w-4 h-4 inline mr-2"/> 진행 제어</button>
                   <button onClick={() => setAdminTab('settings')} className={`py-4 px-6 font-bold text-sm border-b-2 transition ${adminTab === 'settings' ? 'border-[#8A1538] text-[#8A1538]' : 'border-transparent text-gray-500'}`}><Settings className="w-4 h-4 inline mr-2"/> 팀 설정</button>
-                  <button onClick={() => setAdminTab('monitoring')} className={`py-4 px-6 font-bold text-sm border-b-2 transition ${adminTab === 'monitoring' ? 'border-[#8A1538] text-[#8A1538]' : 'border-transparent text-gray-500'}`}><Activity className="w-4 h-4 inline mr-2"/> 학생 모니터링</button>
+                  <button onClick={() => setAdminTab('monitoring')} className={`py-4 px-6 font-bold text-sm border-b-2 transition ${adminTab === 'monitoring' ? 'border-[#8A1538] text-[#8A1538]' : 'border-transparent text-gray-500'}`}><LayoutDashboard className="w-4 h-4 inline mr-2"/> 관제 대시보드</button>
                   <button onClick={() => setAdminTab('investments')} className={`py-4 px-6 font-bold text-sm border-b-2 transition ${adminTab === 'investments' ? 'border-[#8A1538] text-[#8A1538]' : 'border-transparent text-gray-500'}`}><TrendingUp className="w-4 h-4 inline mr-2"/> 최종 현황판</button>
                 </div>
                 <button onClick={() => setRole(null)} className="text-gray-400 font-bold ml-4 hover:text-red-500"><LogOut className="w-4 h-4"/></button>
@@ -408,7 +476,7 @@ export default function App() {
                 {adminTab === 'control' && (
                   <div className="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
-                      <h3 className="text-xl font-black mb-4 flex items-center"><Clock className="w-6 h-6 mr-2 text-blue-600"/> 라이브 타이머 (학생들에게 숨김 처리됨)</h3>
+                      <h3 className="text-xl font-black mb-4 flex items-center"><Clock className="w-6 h-6 mr-2 text-blue-600"/> 라이브 타이머 (학생 화면에서 숨김)</h3>
                       <div className="text-center bg-gray-900 text-white p-6 rounded-2xl shadow-inner mb-4">
                         <div className="text-6xl font-mono font-black tabular-nums tracking-wider">{formatTime(timeLeft)}</div>
                       </div>
@@ -482,75 +550,139 @@ export default function App() {
                   </div>
                 )}
 
-                {/* 탭 3: 모니터링 */}
+                {/* 탭 3: 모니터링 대시보드 */}
                 {adminTab === 'monitoring' && (
-                  <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 max-w-6xl mx-auto">
-                    <div className="flex justify-between items-center mb-6">
-                      <div>
-                        <h3 className="text-lg font-bold flex items-center"><Eye className="w-5 h-5 mr-2 text-blue-600"/> 실시간 노트 엿보기 (X-Ray)</h3>
-                      </div>
-                      <button onClick={downloadMonitoringExcel} className="bg-blue-50 text-blue-700 hover:bg-blue-100 px-4 py-2 rounded-lg font-bold flex items-center text-sm border border-blue-200">
-                        <Download className="w-4 h-4 mr-1"/> 진행상태(초안) 다운로드
-                      </button>
-                    </div>
+                  <div className="max-w-7xl mx-auto">
                     
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm text-left">
-                        <thead className="bg-gray-100 text-gray-600 font-bold">
-                          <tr><th className="p-3">상태</th><th className="p-3">학번</th><th className="p-3">이름 (팀)</th><th className="p-3">최근 활동 시간</th><th className="p-3 text-right">답안 보기</th></tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-100">
-                          {studentList.map(s => {
-                            const isSub = submissionsList.find(sub => sub.studentId === s.id);
-                            const isActive = activeUsers[s.id];
-                            const studentData = isSub ? isSub.evaluations : (isActive?.evaluations || []);
-                            const timeStr = isSub ? new Date(isSub.timestamp).toLocaleTimeString() : (isActive?.timestamp ? new Date(isActive.timestamp).toLocaleTimeString() : '-');
-                            
-                            let statusUI = <span className="bg-gray-100 text-gray-400 px-2 py-1 rounded text-xs font-bold">미접속</span>;
-                            if (isSub) statusUI = <span className="bg-green-100 text-green-700 px-2 py-1 rounded text-xs font-bold border border-green-200">제출완료</span>;
-                            else if (isActive) statusUI = <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs font-bold border border-blue-200 animate-pulse">평가중</span>;
+                    {/* 상단 통계 요약 (새로 추가됨) */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                      <div className="bg-white p-5 rounded-2xl border shadow-sm flex items-center justify-between">
+                        <div>
+                          <p className="text-gray-500 text-sm font-bold mb-1">전체 수강생</p>
+                          <h3 className="text-2xl font-black text-gray-800">{totalCount}명</h3>
+                        </div>
+                        <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center"><Users className="w-6 h-6 text-gray-600" /></div>
+                      </div>
+                      <div className="bg-white p-5 rounded-2xl border shadow-sm flex items-center justify-between">
+                        <div>
+                          <p className="text-gray-500 text-sm font-bold mb-1">최종 제출 완료</p>
+                          <h3 className="text-2xl font-black text-green-600">{submittedCount}명</h3>
+                        </div>
+                        <div className="w-12 h-12 bg-green-50 rounded-full flex items-center justify-center"><CheckCircle className="w-6 h-6 text-green-500" /></div>
+                      </div>
+                      <div className="bg-white p-5 rounded-2xl border shadow-sm flex items-center justify-between">
+                        <div>
+                          <p className="text-gray-500 text-sm font-bold mb-1">현재 접속 (평가중)</p>
+                          <h3 className="text-2xl font-black text-blue-600">{activeCount}명</h3>
+                        </div>
+                        <div className="w-12 h-12 bg-blue-50 rounded-full flex items-center justify-center"><Activity className="w-6 h-6 text-blue-500" /></div>
+                      </div>
+                      <div className="bg-white p-5 rounded-2xl border shadow-sm flex items-center justify-between">
+                        <div>
+                          <p className="text-gray-500 text-sm font-bold mb-1">미접속 / 대기중</p>
+                          <h3 className="text-2xl font-black text-orange-500">{waitingCount}명</h3>
+                        </div>
+                        <div className="w-12 h-12 bg-orange-50 rounded-full flex items-center justify-center"><Pause className="w-6 h-6 text-orange-500" /></div>
+                      </div>
+                    </div>
 
-                            return (
-                              <React.Fragment key={s.id}>
-                                <tr className="hover:bg-gray-50 transition cursor-pointer" onClick={() => setExpandedStudent(expandedStudent === s.id ? null : s.id)}>
-                                  <td className="p-3">{statusUI}</td>
-                                  <td className="p-3 font-mono text-gray-500">{s.id}</td>
-                                  <td className="p-3 font-bold">{s.name} <span className="text-xs text-gray-400">({s.team}팀)</span></td>
-                                  <td className="p-3 text-xs text-gray-500 font-mono">{timeStr}</td>
-                                  <td className="p-3 text-right"><button className="text-blue-600 font-bold text-xs bg-blue-100 px-3 py-1.5 rounded-full">{expandedStudent === s.id ? '닫기' : '펼쳐보기'}</button></td>
-                                </tr>
-                                {expandedStudent === s.id && (
-                                  <tr>
-                                    <td colSpan="5" className="p-0 border-b-2 border-blue-200">
-                                      <div className="bg-gray-800 p-6 shadow-inner">
-                                        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
-                                          {studentData.map(ev => {
-                                            return (
-                                              <div key={ev.teamId} className={`bg-gray-700 p-3 rounded-lg border ${s.team === ev.teamId ? 'border-gray-600 opacity-50' : 'border-gray-500'}`}>
-                                                <div className="flex justify-between items-center mb-2"><span className="text-white font-bold">{ev.teamId}팀</span><span className="text-green-400 text-xs font-bold">{ev.tempAmount || 0}만</span></div>
-                                                {s.team !== ev.teamId && (
-                                                  <>
-                                                    <div className="flex gap-1 mb-2 text-[10px] text-gray-200 font-mono">
-                                                      <span className="bg-gray-600 px-1 py-0.5 rounded">P:{ev.problem||0}</span>
-                                                      <span className="bg-gray-600 px-1 py-0.5 rounded">S:{ev.solution||0}</span>
-                                                      <span className="bg-gray-600 px-1 py-0.5 rounded">Sc:{ev.scaleup||0}</span>
-                                                    </div>
-                                                    <p className="text-xs text-gray-300 italic h-12 overflow-y-auto bg-gray-800 p-2 rounded">"{ev.comment}"</p>
-                                                  </>
-                                                )}
-                                              </div>
-                                            )
-                                          })}
-                                        </div>
-                                      </div>
+                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
+                      <div className="flex justify-between items-center mb-6">
+                        <div>
+                          <h3 className="text-lg font-bold flex items-center"><Eye className="w-5 h-5 mr-2 text-blue-600"/> 학생별 활동 내역 (X-Ray)</h3>
+                        </div>
+                        <div className="flex gap-2">
+                          <button onClick={() => setModal({show: true, type: 'ALL', targetId: null, targetName: '', message: '테스트용으로 입력된 모든 학생의 제출 데이터를 완전히 삭제하고 초기화하시겠습니까?'})} className="bg-red-50 text-red-600 hover:bg-red-100 px-4 py-2 rounded-lg font-bold flex items-center text-sm border border-red-200">
+                            <Trash2 className="w-4 h-4 mr-1"/> 전체 데이터 초기화
+                          </button>
+                          <button onClick={downloadMonitoringExcel} className="bg-blue-50 text-blue-700 hover:bg-blue-100 px-4 py-2 rounded-lg font-bold flex items-center text-sm border border-blue-200">
+                            <Download className="w-4 h-4 mr-1"/> 상태 엑셀 다운로드
+                          </button>
+                        </div>
+                      </div>
+                      
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm text-left">
+                          <thead className="bg-gray-100 text-gray-600 font-bold">
+                            <tr>
+                              <th className="p-3">상태</th>
+                              <th className="p-3">학번/이름 (팀)</th>
+                              <th className="p-3">현재 화면위치</th>
+                              <th className="p-3">최근 저장 시간</th>
+                              <th className="p-3 text-center">관리</th>
+                              <th className="p-3 text-right">답안 보기</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {studentList.map(s => {
+                              const isSub = submissionsList.find(sub => sub.studentId === s.id);
+                              const isActive = activeUsers[s.id];
+                              const studentData = isSub ? isSub.evaluations : (isActive?.evaluations || []);
+                              const finalAttr = isSub ? isSub.finalAttractiveness : (isActive?.finalAttractiveness || {});
+                              const timeStr = isSub ? new Date(isSub.timestamp).toLocaleTimeString() : (isActive?.timestamp ? new Date(isActive.timestamp).toLocaleTimeString() : '-');
+                              const cPhase = isActive?.currentPhase;
+                              const phaseText = cPhase === 0 ? '대기실' : (cPhase === 10 ? '최종배분중' : (cPhase ? `${cPhase}팀 평가중` : '-'));
+                              
+                              let statusUI = <span className="bg-gray-100 text-gray-400 px-2 py-1 rounded text-xs font-bold">미접속</span>;
+                              if (isSub) statusUI = <span className="bg-green-100 text-green-700 px-2 py-1 rounded text-xs font-bold border border-green-200">제출완료</span>;
+                              else if (isActive) statusUI = <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs font-bold border border-blue-200 animate-pulse">평가중</span>;
+
+                              return (
+                                <React.Fragment key={s.id}>
+                                  <tr className="hover:bg-gray-50 transition">
+                                    <td className="p-3" onClick={() => setExpandedStudent(expandedStudent === s.id ? null : s.id)}>{statusUI}</td>
+                                    <td className="p-3 font-bold" onClick={() => setExpandedStudent(expandedStudent === s.id ? null : s.id)}>
+                                      <span className="font-mono text-gray-400 font-normal mr-2">{s.id}</span>
+                                      {s.name} <span className="text-xs text-[#8A1538] bg-[#8A1538]/10 px-1 rounded ml-1">{s.team}팀</span>
+                                    </td>
+                                    <td className="p-3 font-bold text-gray-600" onClick={() => setExpandedStudent(expandedStudent === s.id ? null : s.id)}>
+                                      {isSub ? '-' : phaseText}
+                                    </td>
+                                    <td className="p-3 text-xs text-gray-500 font-mono" onClick={() => setExpandedStudent(expandedStudent === s.id ? null : s.id)}>{timeStr}</td>
+                                    <td className="p-3 text-center">
+                                      <button onClick={(e) => { e.stopPropagation(); setModal({show: true, type: 'STUDENT', targetId: s.id, targetName: s.name, message: `${s.name} 학생의 작성 내용을 삭제하고 재입력 가능하게 변경하시겠습니까?`})}} className="text-gray-500 hover:text-red-600 hover:bg-red-50 p-1.5 rounded transition">
+                                        <RefreshCw className="w-4 h-4"/>
+                                      </button>
+                                    </td>
+                                    <td className="p-3 text-right">
+                                      <button onClick={() => setExpandedStudent(expandedStudent === s.id ? null : s.id)} className="text-blue-600 font-bold text-xs bg-blue-100 px-3 py-1.5 rounded-full hover:bg-blue-200 transition">
+                                        {expandedStudent === s.id ? '닫기' : '엿보기'}
+                                      </button>
                                     </td>
                                   </tr>
-                                )}
-                              </React.Fragment>
-                            );
-                          })}
-                        </tbody>
-                      </table>
+                                  {expandedStudent === s.id && (
+                                    <tr>
+                                      <td colSpan="6" className="p-0 border-b-2 border-blue-200">
+                                        <div className="bg-gray-800 p-6 shadow-inner">
+                                          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
+                                            {studentData.map(ev => {
+                                              return (
+                                                <div key={ev.teamId} className={`bg-gray-700 p-3 rounded-lg border ${s.team === ev.teamId ? 'border-gray-600 opacity-50' : 'border-gray-500'}`}>
+                                                  <div className="flex justify-between items-center mb-2"><span className="text-white font-bold">{ev.teamId}팀</span><span className="text-green-400 text-xs font-bold">{ev.tempAmount || 0}만</span></div>
+                                                  {s.team !== ev.teamId && (
+                                                    <>
+                                                      <div className="flex gap-1 mb-2 text-[10px] text-gray-200 font-mono">
+                                                        <span className="bg-gray-600 px-1 py-0.5 rounded">P:{ev.problem||0}</span>
+                                                        <span className="bg-gray-600 px-1 py-0.5 rounded">S:{ev.solution||0}</span>
+                                                        <span className="bg-gray-600 px-1 py-0.5 rounded">Sc:{ev.scaleup||0}</span>
+                                                      </div>
+                                                      <p className="text-xs text-gray-300 italic h-12 overflow-y-auto bg-gray-800 p-2 rounded">"{ev.comment}"</p>
+                                                    </>
+                                                  )}
+                                                </div>
+                                              )
+                                            })}
+                                          </div>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  )}
+                                </React.Fragment>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -609,12 +741,12 @@ export default function App() {
           {/* === 3. 학생(Student) 화면 === */}
           {role === 'student' && (
             <div className="flex-1 flex flex-col relative bg-white">
+              
               <div className="bg-gray-900 text-white p-4 flex justify-between items-center z-20 shadow-md">
                 <div className="flex items-center">
                   <div className="w-10 h-10 bg-[#8A1538] rounded-full flex items-center justify-center font-black mr-3 shadow-inner text-lg">{studentInfo.myTeam}</div>
                   <div><div className="text-xs text-gray-400 font-bold uppercase tracking-wider">엔젤 투자자</div><div className="font-bold">{studentInfo.name}</div></div>
                 </div>
-                {/* 학생 화면에서는 타이머 대신 누적 임시 투자금액을 실시간 표시하여 예산 관리 지원 */}
                 {!isSubmitted && (
                   <div className="flex items-center bg-gray-800 border border-gray-700 px-3 py-2 rounded-lg shadow-inner text-xs">
                     <span className="text-gray-400 mr-2 hidden md:inline">누적 임시 투자금:</span>
@@ -666,7 +798,6 @@ export default function App() {
                       </div>
                     )}
 
-                    {/* 개별 폼 (1~9팀) P-S-S 상세 설명 복원 */}
                     {localPhase >= 1 && localPhase <= 9 && (() => {
                       const currentTeam = localPhase;
                       const evalData = evaluations[currentTeam - 1];
@@ -718,7 +849,7 @@ export default function App() {
                             <textarea 
                               value={evalData.comment} onChange={e => handleEvalChange(currentTeam - 1, 'comment', e.target.value)} 
                               className="w-full p-4 border border-gray-300 rounded-xl bg-white focus:ring-2 focus:ring-[#8A1538] outline-none h-24 text-sm resize-none" 
-                              placeholder="최종 평가에서 검토하기 위한 메모장으로 사용하세요. 각 팀의 가장 매력적인 포인트나 건설적 질문을 작성해주세요." 
+                              placeholder="가장 매력적인 포인트나 투자 리스크를 작성해주세요." 
                             />
                           </div>
 
@@ -751,7 +882,7 @@ export default function App() {
                             if (studentInfo.myTeam === num) return null;
                             const isOver = finalInvestments[num] > 50;
                             const teamInfo = teamsConfig.find(t => t.id === num) || { name: '' };
-                            const prevEval = evaluations[num - 1]; // 본인이 평가했던 PSS 점수 가져오기
+                            const prevEval = evaluations[num - 1]; 
                             
                             return (
                               <div key={num} className={`p-5 rounded-2xl border transition-all shadow-sm ${isOver ? 'border-red-400 bg-red-50' : 'bg-white'}`}>
@@ -761,30 +892,30 @@ export default function App() {
                                       <span className="font-black text-lg text-gray-800">{num}팀</span>
                                       <span className="text-sm text-gray-500 ml-2 font-bold">{teamInfo.name}</span>
                                     </div>
-                                    {/* 내가 준 객관식 점수 표시 */}
-                                    <div className="text-[10px] font-mono font-bold text-gray-400 mt-1 flex gap-1.5">
-                                      <span className="bg-gray-100 px-1.5 py-0.5 rounded">P: {prevEval.problem||0}</span>
-                                      <span className="bg-gray-100 px-1.5 py-0.5 rounded">S: {prevEval.solution||0}</span>
-                                      <span className="bg-gray-100 px-1.5 py-0.5 rounded">Sc: {prevEval.scaleup||0}</span>
+                                    <div className="text-xs font-bold text-gray-500 mt-2 flex flex-col gap-1 bg-gray-50 p-2 rounded-lg border border-gray-100">
+                                      <div className="flex items-center gap-2"><span className="text-gray-600 font-normal">Problem (문제)</span><span className="text-[#8A1538] ml-auto">{prevEval.problem||0}점</span></div>
+                                      <div className="flex items-center gap-2"><span className="text-gray-600 font-normal">Solution (해결)</span><span className="text-[#8A1538] ml-auto">{prevEval.solution||0}점</span></div>
+                                      <div className="flex items-center gap-2"><span className="text-gray-600 font-normal">Scale-up (성장)</span><span className="text-[#8A1538] ml-auto">{prevEval.scaleup||0}점</span></div>
                                     </div>
                                   </div>
-                                  <div className="flex items-center">
-                                    <input 
-                                      type="text" inputMode="numeric"
-                                      value={finalInvestments[num] || ''} onChange={(e) => handleFinalInvestChange(num, e.target.value)} 
-                                      className={`w-24 p-2.5 text-right font-black text-lg border rounded-lg outline-none ${isOver ? 'text-red-600 border-red-300 bg-white' : 'focus:ring-2 focus:ring-[#8A1538] border-gray-300 bg-gray-50 focus:bg-white'}`} 
-                                      placeholder="0" 
-                                    />
-                                    <span className="ml-2 text-sm text-gray-600 font-bold">만</span>
+                                  <div className="flex flex-col items-end h-full justify-start mt-1">
+                                    <div className="flex items-center">
+                                      <input 
+                                        type="text" inputMode="numeric"
+                                        value={finalInvestments[num] || ''} onChange={(e) => handleFinalInvestChange(num, e.target.value)} 
+                                        className={`w-24 p-3 text-right font-black text-xl border rounded-lg outline-none shadow-inner ${isOver ? 'text-red-600 border-red-300 bg-white' : 'focus:ring-2 focus:ring-[#8A1538] border-gray-300 bg-gray-50 focus:bg-white'}`} 
+                                        placeholder="0" 
+                                      />
+                                      <span className="ml-2 text-sm text-gray-600 font-bold">만</span>
+                                    </div>
                                   </div>
                                 </div>
-                                <div className="text-xs text-gray-500 italic line-clamp-2 bg-gray-50 p-2.5 rounded-lg border border-gray-100">"{prevEval.comment || '작성된 코멘트가 없습니다.'}"</div>
+                                <div className="text-xs text-gray-500 italic line-clamp-2 bg-gray-50 p-2.5 rounded-lg border border-gray-100 mt-2">"{prevEval.comment || '작성된 코멘트가 없습니다.'}"</div>
                               </div>
                             );
                           })}
                          </div>
 
-                         {/* 최고 투자팀이 여러 개(공동 1위)일 경우 명시적 선택 요구 UI */}
                          {topTeams.length > 1 && (
                            <div className="bg-yellow-50 border border-yellow-200 p-5 rounded-2xl mb-6 shadow-sm">
                              <label className="font-black text-yellow-800 block mb-3 flex items-center">
@@ -803,14 +934,12 @@ export default function App() {
                            </div>
                          )}
 
-                         {/* 유효한 1위 팀이 확정되었을 때만 상세 문항 노출 */}
                          {derivedFirstTeam !== null && maxInvestment > 0 && (
                            <div className="bg-[#8A1538]/5 border border-[#8A1538]/20 p-5 md:p-6 rounded-2xl mb-8 shadow-sm">
                              <h3 className="font-black text-gray-800 text-lg mb-5 border-b border-[#8A1538]/20 pb-3 flex items-center">
                                <Trophy className="w-5 h-5 text-yellow-500 mr-2"/> 최종 1위 <span className="text-[#8A1538] mx-1">{derivedFirstTeam}팀</span> 선정 사유
                              </h3>
                              
-                             {/* 매력 포인트 (선택 사항) */}
                              <label className="font-bold text-gray-800 block mb-3 flex flex-col md:flex-row md:items-center">
                                <span className="flex items-center"><CheckSquare className="w-4 h-4 mr-1.5 text-[#8A1538]"/> 투자 매력 포인트</span>
                                <span className="text-xs font-normal text-gray-500 md:ml-2 mt-1 md:mt-0">(선택 사항, 다중 선택 가능)</span>
@@ -832,7 +961,6 @@ export default function App() {
                                })}
                              </div>
 
-                             {/* 주관식 서술 (필수) */}
                              <label className="font-bold text-gray-800 block mb-3 flex flex-col md:flex-row md:items-center">
                                <span className="flex items-center"><Edit3 className="w-4 h-4 mr-1.5 text-[#8A1538]"/> 1위 선정 상세 사유</span>
                                <span className="text-xs font-bold text-red-500 md:ml-2 mt-1 md:mt-0">(필수 작성)</span>
@@ -861,7 +989,6 @@ export default function App() {
                   </div>
                   <div className="w-full bg-gray-200 h-2 mb-4 rounded-full overflow-hidden"><div className={`h-full transition-all duration-500 ${TOTAL_BUDGET-finalTotal===0 ? 'bg-green-500':'bg-[#8A1538]'}`} style={{width: `${Math.min((finalTotal/100)*100, 100)}%`}}></div></div>
                   
-                  {/* 제출 버튼: 유효성에 따른 문구 동적 변경 */}
                   <button onClick={submitFinalEval} disabled={!isFinalValid} className={`w-full py-4 rounded-xl font-black text-lg text-white transition-all ${isFinalValid ? 'bg-[#8A1538] hover:bg-[#6e112d] shadow-lg active:scale-95' : 'bg-gray-300'}`}>
                     {finalTotal !== 100 ? '100만원을 모두 분배해주세요' : (derivedFirstTeam === null ? '공동 1위 중 한 팀을 선택해주세요' : (firstTeamReason.trim().length === 0 ? '1위 선정 사유를 작성해주세요' : '최종 제출 완료'))}
                   </button>
