@@ -952,7 +952,7 @@ export default function App() {
                          </div>
 
                          <div className="space-y-4 mb-8">
-                          {[1,2,3,4,5,6,7,8,9].map(num => {
+                          {PRESENTATION_ORDER.map(num => {
                             if (studentInfo.myTeam === num) return null;
                             const isOver = finalInvestments[num] > 50;
                             const teamInfo = teamsConfig.find(t => t.id === num) || { name: '' };
