@@ -723,10 +723,10 @@ export default function App() {
                                           <div className="bg-gray-700 p-3 rounded-lg border border-gray-500 flex items-center">
                                             <span className="text-white font-bold text-sm mr-3">1위 팀 매력 포인트 (Phase 10) : </span>
                                             <div className="flex gap-2">
-                                              {ATTRACT_OPTIONS.filter(opt => studentAttract[opt.id]).map(opt => (
+                                              {ATTRACT_OPTIONS.filter(opt => finalAttr[opt.id]).map(opt => (
                                                 <span key={opt.id} className="text-xs bg-[#8A1538] text-white px-2 py-1 rounded font-bold">{opt.label.split(' ')[0]}</span>
                                               ))}
-                                              {ATTRACT_OPTIONS.filter(opt => studentAttract[opt.id]).length === 0 && <span className="text-xs text-gray-400 italic">아직 선택하지 않음</span>}
+                                              {ATTRACT_OPTIONS.filter(opt => finalAttr[opt.id]).length === 0 && <span className="text-xs text-gray-400 italic">아직 선택하지 않음</span>}
                                             </div>
                                           </div>
                                         </div>
