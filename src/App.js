@@ -6,10 +6,10 @@ import {
   Play, CheckCircle, MonitorUp, Smartphone, Settings, AlertCircle, 
   DollarSign, LogOut, BarChart3, Download, Users, TrendingUp, Trophy, 
   ChevronRight, Building2, Presentation, Loader2, Activity, RefreshCw, Trash2, LayoutDashboard,
-  UserCheck, ChevronDown, ChevronUp, FileText, Eye, Calculator, PieChart, Clock, Pause, Square, CheckSquare, Edit3
+  UserCheck, ChevronDown, ChevronUp, FileText, Eye, Calculator, PieChart, Clock, Pause, Square, CheckSquare, Edit3, Lock
 } from 'lucide-react';
 
-// === [Firebase 초기화 (교수님 실제 서버)] ===
+// === [Firebase 초기화] ===
 const firebaseConfig = {
   apiKey: "AIzaSyALr4fhyoToh0yseqsKleoU_B07FexO4Wc",
   authDomain: "ku-ssi.firebaseapp.com",
@@ -24,7 +24,9 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = 'ku-ssi-final-v1'; 
 
-// === [기본 설정 데이터 (9팀 30명 명단)] ===
+// === [발표 순서 및 기본 설정] ===
+const PRESENTATION_ORDER = [6, 3, 1, 2, 8, 9, 4, 7, 5];
+
 const DEFAULT_TEAMS = [
   { id: 1, name: '1팀', desc: '팀 소개를 입력하세요', membersStr: '2025140647,구경모\n2025140659,류현서\n2026140613,김도훈\n2026320611,이건호' },
   { id: 2, name: '2팀', desc: '팀 소개를 입력하세요', membersStr: '2026130343,이영종\n2026190135,신효식\n2026320125,김경우' },
@@ -56,6 +58,8 @@ export default function App() {
   const [toastMessage, setToastMessage] = useState(null);
   
   const [globalPhase, setGlobalPhase] = useState(0); 
+  const [openedPhases, setOpenedPhases] = useState([]); // 열린 탭 누적
+  const [globalEvalStatus, setGlobalEvalStatus] = useState('IN_PROGRESS'); // IN_PROGRESS, PAUSED, ENDED
   const [localPhase, setLocalPhase] = useState(0);
   const [teamsConfig, setTeamsConfig] = useState(DEFAULT_TEAMS);
   
@@ -134,11 +138,15 @@ export default function App() {
       if (docSnap.exists()) {
         const data = docSnap.data();
         setGlobalPhase(data.phase || 0);
+        setOpenedPhases(data.openedPhases || []);
+        setGlobalEvalStatus(data.evalStatus || 'IN_PROGRESS');
         if (role === 'student' && data.phase !== globalPhase) setLocalPhase(data.phase);
         if (data.teams) setTeamsConfig(data.teams);
         if (data.timer) setTimerSync(data.timer);
       } else {
-        setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'admin_config', 'state'), { phase: 0, teams: teamsConfig, timer: timerSync });
+        setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'admin_config', 'state'), { 
+          phase: 0, openedPhases: [0], evalStatus: 'IN_PROGRESS', teams: teamsConfig, timer: timerSync 
+        });
       }
     });
 
@@ -147,7 +155,6 @@ export default function App() {
       snapshot.forEach(doc => subs.push(doc.data()));
       setSubmissionsList(subs);
       
-      // 관리자에 의해 제출 내역이 초기화되었는지 실시간 감지하여 학생 화면 리셋
       if (role === 'student' && studentInfo) {
         const hasSubmitted = subs.find(s => s.studentId === studentInfo.studentId);
         setIsSubmitted(!!hasSubmitted);
@@ -201,7 +208,7 @@ export default function App() {
     await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'admin_config', 'state'), { timer: newTimer }, { merge: true });
   };
 
-  // === [디바운싱 클라우드 자동 저장 (현재 화면 위치 포함)] ===
+  // === [디바운싱 클라우드 자동 저장] ===
   useEffect(() => {
     if (role === 'student' && studentInfo && !isSubmitted) {
       const timeoutId = setTimeout(async () => {
@@ -242,8 +249,19 @@ export default function App() {
 
   const changePhase = async (newPhase) => {
     if (!user) return;
-    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'admin_config', 'state'), { phase: newPhase }, { merge: true });
+    const newOpened = [...new Set([...openedPhases, newPhase])];
+    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'admin_config', 'state'), { 
+      phase: newPhase, openedPhases: newOpened 
+    }, { merge: true });
     showToast(`Phase ${newPhase} 동기화 완료`);
+  };
+
+  const changeEvalStatus = async (status) => {
+    if (!user) return;
+    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'admin_config', 'state'), { 
+      evalStatus: status 
+    }, { merge: true });
+    showToast(`학생 화면이 ${status === 'IN_PROGRESS' ? '입력 가능' : status === 'PAUSED' ? '일시 정지' : '종료'} 상태로 변경되었습니다.`);
   };
 
   const updateTeamsConfig = async () => {
@@ -298,6 +316,10 @@ export default function App() {
         for (const [sId, _] of Object.entries(activeUsers)) {
           await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'active_users', sId));
         }
+        // 상태 초기화
+        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'admin_config', 'state'), { 
+          phase: 0, openedPhases: [0], evalStatus: 'IN_PROGRESS', teams: teamsConfig, timer: { isRunning: false, endsAt: 0, remaining: 0, duration: 0 } 
+        });
         showToast('모든 평가 데이터가 초기화되었습니다.');
       } catch (e) { showToast("오류가 발생했습니다."); }
     }
@@ -389,14 +411,12 @@ export default function App() {
     derivedFirstTeam !== null && 
     firstTeamReason.trim().length > 0;
 
-  // 대시보드 통계 변수 계산
   const totalCount = studentList.length;
   const submittedCount = submissionsList.length;
   let activeCount = 0;
   studentList.forEach(s => {
     const isSub = submissionsList.find(sub => sub.studentId === s.id);
     const isActive = activeUsers[s.id];
-    // 30분 이내 활동 기록이 있으면 '접속중'으로 판단
     if (!isSub && isActive?.timestamp && (Date.now() - new Date(isActive.timestamp).getTime() < 30 * 60 * 1000)) {
       activeCount++;
     }
@@ -441,8 +461,8 @@ export default function App() {
         </div>
       )}
 
-      <div className="pt-8 px-4 flex justify-center">
-        <div className={deviceMode === 'pc' ? "max-w-7xl w-full mx-auto shadow-2xl rounded-xl overflow-hidden min-h-[85vh] flex flex-col bg-white" : "max-w-md w-full mx-auto shadow-2xl border-x min-h-screen flex flex-col bg-gray-50"}>
+      <div className="pt-8 px-4 flex justify-center relative">
+        <div className={deviceMode === 'pc' ? "max-w-7xl w-full mx-auto shadow-2xl rounded-xl overflow-hidden min-h-[85vh] flex flex-col bg-white relative" : "max-w-md w-full mx-auto shadow-2xl border-x min-h-screen flex flex-col bg-gray-50 relative"}>
 
           {/* === 1. 로그인 === */}
           {!role && (
@@ -475,30 +495,58 @@ export default function App() {
                 {/* 탭 1: 컨트롤 */}
                 {adminTab === 'control' && (
                   <div className="max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
-                      <h3 className="text-xl font-black mb-4 flex items-center"><Clock className="w-6 h-6 mr-2 text-blue-600"/> 라이브 타이머 (학생 화면에서 숨김)</h3>
-                      <div className="text-center bg-gray-900 text-white p-6 rounded-2xl shadow-inner mb-4">
-                        <div className="text-6xl font-mono font-black tabular-nums tracking-wider">{formatTime(timeLeft)}</div>
+                    {/* 평가 상태 제어 및 타이머 */}
+                    <div className="space-y-6">
+                      <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
+                        <div className="flex justify-between items-center mb-4">
+                          <h3 className="text-xl font-black flex items-center"><Lock className="w-6 h-6 mr-2 text-red-600"/> 전체 평가 상태 제어</h3>
+                        </div>
+                        <p className="text-xs text-gray-500 mb-4 bg-gray-50 p-2 rounded">발표 도중이나 종료 시 학생들의 기기 입력을 즉시 잠금/해제할 수 있습니다.</p>
+                        <div className="grid grid-cols-3 gap-2">
+                          <button onClick={() => changeEvalStatus('IN_PROGRESS')} className={`py-3 rounded-xl font-bold flex flex-col items-center justify-center border transition-all ${globalEvalStatus === 'IN_PROGRESS' ? 'bg-green-600 text-white shadow-md' : 'bg-white text-green-700 border-green-300 hover:bg-green-50'}`}>
+                            <Play className="w-5 h-5 mb-1"/> 평가 시작
+                          </button>
+                          <button onClick={() => changeEvalStatus('PAUSED')} className={`py-3 rounded-xl font-bold flex flex-col items-center justify-center border transition-all ${globalEvalStatus === 'PAUSED' ? 'bg-yellow-500 text-white shadow-md' : 'bg-white text-yellow-600 border-yellow-300 hover:bg-yellow-50'}`}>
+                            <Pause className="w-5 h-5 mb-1"/> 일시 정지
+                          </button>
+                          <button onClick={() => changeEvalStatus('ENDED')} className={`py-3 rounded-xl font-bold flex flex-col items-center justify-center border transition-all ${globalEvalStatus === 'ENDED' ? 'bg-red-600 text-white shadow-md' : 'bg-white text-red-600 border-red-300 hover:bg-red-50'}`}>
+                            <Square className="w-5 h-5 mb-1"/> 평가 종료
+                          </button>
+                        </div>
                       </div>
-                      <div className="grid grid-cols-3 gap-2 mb-4">
-                        <button onClick={() => handleTimerControl('start', 15)} className="bg-blue-50 text-blue-700 py-2 rounded-lg font-bold border border-blue-200 hover:bg-blue-100">15분 (전체)</button>
-                        <button onClick={() => handleTimerControl('start', 10)} className="bg-blue-50 text-blue-700 py-2 rounded-lg font-bold border border-blue-200 hover:bg-blue-100">10분 (발표)</button>
-                        <button onClick={() => handleTimerControl('start', 3)} className="bg-blue-50 text-blue-700 py-2 rounded-lg font-bold border border-blue-200 hover:bg-blue-100">3분 (Q&A)</button>
-                      </div>
-                      <div className="flex gap-2">
-                        {timerSync.isRunning ? 
-                          <button onClick={() => handleTimerControl('pause')} className="flex-1 bg-yellow-500 text-white py-3 rounded-xl font-bold flex justify-center items-center"><Pause className="w-5 h-5 mr-1"/> 일시정지</button>
-                          : 
-                          <button onClick={() => handleTimerControl('resume')} className="flex-1 bg-green-500 text-white py-3 rounded-xl font-bold flex justify-center items-center"><Play className="w-5 h-5 mr-1"/> 이어서 시작</button>
-                        }
-                        <button onClick={() => handleTimerControl('stop')} className="flex-1 bg-red-500 text-white py-3 rounded-xl font-bold flex justify-center items-center"><Square className="w-5 h-5 mr-1"/> 정지/초기화</button>
+
+                      <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
+                        <h3 className="text-xl font-black mb-4 flex items-center"><Clock className="w-6 h-6 mr-2 text-blue-600"/> 라이브 타이머</h3>
+                        <div className="text-center bg-gray-900 text-white p-5 rounded-2xl shadow-inner mb-4">
+                          <div className="text-5xl font-mono font-black tabular-nums tracking-wider">{formatTime(timeLeft)}</div>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 mb-4">
+                          <button onClick={() => handleTimerControl('start', 15)} className="bg-blue-50 text-blue-700 py-2 rounded-lg font-bold border border-blue-200 hover:bg-blue-100">15분 (전체)</button>
+                          <button onClick={() => handleTimerControl('start', 10)} className="bg-blue-50 text-blue-700 py-2 rounded-lg font-bold border border-blue-200 hover:bg-blue-100">10분 (발표)</button>
+                          <button onClick={() => handleTimerControl('start', 3)} className="bg-blue-50 text-blue-700 py-2 rounded-lg font-bold border border-blue-200 hover:bg-blue-100">3분 (Q&A)</button>
+                        </div>
+                        <div className="flex gap-2">
+                          {timerSync.isRunning ? 
+                            <button onClick={() => handleTimerControl('pause')} className="flex-1 bg-yellow-500 text-white py-3 rounded-xl font-bold flex justify-center items-center"><Pause className="w-5 h-5 mr-1"/> 일시정지</button>
+                            : 
+                            <button onClick={() => handleTimerControl('resume')} className="flex-1 bg-green-500 text-white py-3 rounded-xl font-bold flex justify-center items-center"><Play className="w-5 h-5 mr-1"/> 이어서 시작</button>
+                          }
+                          <button onClick={() => handleTimerControl('stop')} className="flex-1 bg-red-500 text-white py-3 rounded-xl font-bold flex justify-center items-center"><Square className="w-5 h-5 mr-1"/> 정지/초기화</button>
+                        </div>
                       </div>
                     </div>
-                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
-                      <h3 className="text-xl font-black mb-4 flex items-center"><MonitorUp className="w-6 h-6 mr-2 text-[#8A1538]"/> 학생 화면 제어</h3>
-                      <button onClick={() => changePhase(0)} className={`w-full p-4 mb-4 rounded-xl font-bold flex justify-between border transition-all ${globalPhase === 0 ? 'bg-[#8A1538] text-white border-[#8A1538] shadow-md' : 'bg-gray-50'}`}>[Phase 0] 대기실 (안내화면) {globalPhase === 0 && <span className="flex w-3 h-3 bg-red-400 rounded-full animate-pulse"></span>}</button>
+
+                    {/* 학생 화면 제어 (발표 순서 적용됨) */}
+                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 h-fit">
+                      <div className="flex justify-between items-start mb-4">
+                        <h3 className="text-xl font-black flex items-center"><MonitorUp className="w-6 h-6 mr-2 text-[#8A1538]"/> 학생 화면 이동 제어</h3>
+                      </div>
+                      <p className="text-xs text-gray-500 mb-4 bg-gray-50 p-2 rounded">아래 버튼을 누르면 모든 학생의 화면이 해당 팀으로 즉시 동기화되며 탭이 오픈됩니다. (실제 발표 순서대로 배치됨)</p>
+                      
+                      <button onClick={() => changePhase(0)} className={`w-full p-4 mb-5 rounded-xl font-bold flex justify-between border transition-all ${globalPhase === 0 ? 'bg-[#8A1538] text-white border-[#8A1538] shadow-md' : 'bg-gray-50'}`}>[Phase 0] 대기실 (안내화면) {globalPhase === 0 && <span className="flex w-3 h-3 bg-red-400 rounded-full animate-pulse"></span>}</button>
+                      
                       <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">
-                        {[1,2,3,4,5,6,7,8,9].map(n => {
+                        {PRESENTATION_ORDER.map(n => {
                           const teamName = teamsConfig.find(t => t.id === n)?.name || `${n}팀`;
                           return (
                             <button key={n} onClick={() => changePhase(n)} className={`p-4 rounded-xl font-bold border transition-all ${globalPhase === n ? 'bg-[#8A1538] text-white border-[#8A1538] shadow-md scale-105' : 'bg-gray-50 hover:bg-gray-100'}`}>
@@ -510,7 +558,7 @@ export default function App() {
                           )
                         })}
                       </div>
-                      <button onClick={() => changePhase(10)} className={`w-full p-6 rounded-xl font-black text-xl border shadow-sm transition-all ${globalPhase === 10 ? 'bg-[#B4975A] text-white border-[#B4975A] shadow-md' : 'bg-yellow-50 text-yellow-800'}`}>[Phase 10] 최종 투자 오픈</button>
+                      <button onClick={() => changePhase(10)} className={`w-full p-6 rounded-xl font-black text-xl border shadow-sm transition-all ${globalPhase === 10 ? 'bg-[#B4975A] text-white border-[#B4975A] shadow-md' : 'bg-yellow-50 text-yellow-800'}`}>[Phase 10] 최종 투자 배분 오픈</button>
                     </div>
                   </div>
                 )}
@@ -554,7 +602,6 @@ export default function App() {
                 {adminTab === 'monitoring' && (
                   <div className="max-w-7xl mx-auto">
                     
-                    {/* 상단 통계 요약 (새로 추가됨) */}
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
                       <div className="bg-white p-5 rounded-2xl border shadow-sm flex items-center justify-between">
                         <div>
@@ -609,7 +656,7 @@ export default function App() {
                               <th className="p-3">학번/이름 (팀)</th>
                               <th className="p-3">현재 화면위치</th>
                               <th className="p-3">최근 저장 시간</th>
-                              <th className="p-3 text-center">관리</th>
+                              <th className="p-3 text-center">개별 리셋</th>
                               <th className="p-3 text-right">답안 보기</th>
                             </tr>
                           </thead>
@@ -629,7 +676,7 @@ export default function App() {
 
                               return (
                                 <React.Fragment key={s.id}>
-                                  <tr className="hover:bg-gray-50 transition">
+                                  <tr className="hover:bg-gray-50 transition cursor-pointer">
                                     <td className="p-3" onClick={() => setExpandedStudent(expandedStudent === s.id ? null : s.id)}>{statusUI}</td>
                                     <td className="p-3 font-bold" onClick={() => setExpandedStudent(expandedStudent === s.id ? null : s.id)}>
                                       <span className="font-mono text-gray-400 font-normal mr-2">{s.id}</span>
@@ -640,7 +687,7 @@ export default function App() {
                                     </td>
                                     <td className="p-3 text-xs text-gray-500 font-mono" onClick={() => setExpandedStudent(expandedStudent === s.id ? null : s.id)}>{timeStr}</td>
                                     <td className="p-3 text-center">
-                                      <button onClick={(e) => { e.stopPropagation(); setModal({show: true, type: 'STUDENT', targetId: s.id, targetName: s.name, message: `${s.name} 학생의 작성 내용을 삭제하고 재입력 가능하게 변경하시겠습니까?`})}} className="text-gray-500 hover:text-red-600 hover:bg-red-50 p-1.5 rounded transition">
+                                      <button onClick={(e) => { e.stopPropagation(); setModal({show: true, type: 'STUDENT', targetId: s.id, targetName: s.name, message: `${s.name} 학생의 작성 내용을 완전히 삭제하고 재입력 가능하게 초기화하시겠습니까?`})}} className="text-gray-500 hover:text-red-600 hover:bg-red-50 p-1.5 rounded transition">
                                         <RefreshCw className="w-4 h-4"/>
                                       </button>
                                     </td>
@@ -654,7 +701,7 @@ export default function App() {
                                     <tr>
                                       <td colSpan="6" className="p-0 border-b-2 border-blue-200">
                                         <div className="bg-gray-800 p-6 shadow-inner">
-                                          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
+                                          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-4">
                                             {studentData.map(ev => {
                                               return (
                                                 <div key={ev.teamId} className={`bg-gray-700 p-3 rounded-lg border ${s.team === ev.teamId ? 'border-gray-600 opacity-50' : 'border-gray-500'}`}>
@@ -672,6 +719,15 @@ export default function App() {
                                                 </div>
                                               )
                                             })}
+                                          </div>
+                                          <div className="bg-gray-700 p-3 rounded-lg border border-gray-500 flex items-center">
+                                            <span className="text-white font-bold text-sm mr-3">1위 팀 매력 포인트 (Phase 10) : </span>
+                                            <div className="flex gap-2">
+                                              {ATTRACT_OPTIONS.filter(opt => studentAttract[opt.id]).map(opt => (
+                                                <span key={opt.id} className="text-xs bg-[#8A1538] text-white px-2 py-1 rounded font-bold">{opt.label.split(' ')[0]}</span>
+                                              ))}
+                                              {ATTRACT_OPTIONS.filter(opt => studentAttract[opt.id]).length === 0 && <span className="text-xs text-gray-400 italic">아직 선택하지 않음</span>}
+                                            </div>
                                           </div>
                                         </div>
                                       </td>
@@ -740,8 +796,24 @@ export default function App() {
 
           {/* === 3. 학생(Student) 화면 === */}
           {role === 'student' && (
-            <div className="flex-1 flex flex-col relative bg-white">
+            <div className="flex-1 flex flex-col relative bg-white overflow-hidden">
               
+              {/* 글로벌 평가 제어 (일시정지 / 종료) 오버레이 */}
+              {globalEvalStatus === 'PAUSED' && (
+                <div className="absolute inset-0 z-50 bg-black/70 backdrop-blur-sm flex flex-col items-center justify-center text-white p-6 text-center animate-[slideDown_0.3s_ease-out]">
+                  <Pause className="w-20 h-20 mb-6 text-yellow-400 animate-pulse" />
+                  <h2 className="text-4xl font-black mb-4">평가 일시정지</h2>
+                  <p className="text-lg text-gray-300">잠시 입력을 멈추고 교수님의 안내에 집중해 주세요.</p>
+                </div>
+              )}
+              {globalEvalStatus === 'ENDED' && (
+                <div className="absolute inset-0 z-50 bg-[#8A1538]/95 backdrop-blur-md flex flex-col items-center justify-center text-white p-6 text-center animate-[slideDown_0.3s_ease-out]">
+                  <Square className="w-20 h-20 mb-6 text-red-200" />
+                  <h2 className="text-4xl font-black mb-4">모든 평가 종료</h2>
+                  <p className="text-lg text-gray-200">현재 평가 세션이 완전히 종료되었습니다.</p>
+                </div>
+              )}
+
               <div className="bg-gray-900 text-white p-4 flex justify-between items-center z-20 shadow-md">
                 <div className="flex items-center">
                   <div className="w-10 h-10 bg-[#8A1538] rounded-full flex items-center justify-center font-black mr-3 shadow-inner text-lg">{studentInfo.myTeam}</div>
@@ -758,23 +830,25 @@ export default function App() {
 
               {globalPhase > 0 && !isSubmitted && (
                 <div className="bg-white border-b border-gray-200 shadow-sm z-10 sticky top-0 flex overflow-x-auto px-2 py-2 gap-2 hide-scrollbar">
-                  {[1,2,3,4,5,6,7,8,9].map(num => {
-                    if (num > globalPhase && globalPhase !== 10) return null; 
+                  {/* 실제 발표 순서 배열을 사용하여 탭 렌더링 */}
+                  {PRESENTATION_ORDER.map(num => {
+                    // 오픈되지 않은 탭이거나, 최종 배분 단계가 아닐 때 숨김
+                    if (!openedPhases.includes(num) && globalPhase !== 10) return null; 
                     return (
                       <button key={num} onClick={() => setLocalPhase(num)} className={`px-4 py-2 rounded-full text-sm font-bold whitespace-nowrap transition-all ${localPhase === num ? 'bg-[#8A1538] text-white shadow-md' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
                         {num}팀 리뷰
                       </button>
                     )
                   })}
-                  {globalPhase === 10 && (
+                  {openedPhases.includes(10) && (
                     <button onClick={() => setLocalPhase(10)} className={`px-4 py-2.5 rounded-full text-sm font-bold whitespace-nowrap transition-all flex items-center ${localPhase === 10 ? 'bg-[#B4975A] text-white shadow-md' : 'bg-yellow-50 text-yellow-700 hover:bg-yellow-100'}`}>
-                      포트폴리오 배분
+                      포트폴리오 확정
                     </button>
                   )}
                 </div>
               )}
 
-              <div className="flex-1 overflow-y-auto pb-36">
+              <div className="flex-1 overflow-y-auto pb-36 relative">
                 {isSubmitted ? (
                   <div className="p-10 flex flex-col items-center justify-center h-full text-center">
                     <div className="w-24 h-24 bg-green-100 rounded-full flex items-center justify-center mb-6"><CheckCircle className="w-12 h-12 text-green-600" /></div>
@@ -793,7 +867,7 @@ export default function App() {
                           ✓ 총 100만원 전액 소진 필수<br/>
                           ✓ 본인 팀 투자 불가<br/>
                           ✓ 최소 2개팀 분산 투자 / 한 팀당 최대 50만원<br/><br/>
-                          오직 발표 내용과 사업성만 보고 투자하십시오.
+                          모수 제외 환산 로직이 적용되어 팀원 수의 유불리가 완벽히 통제됩니다. 오직 발표 내용과 사업성만 보고 투자하십시오.
                         </div>
                       </div>
                     )}
@@ -854,7 +928,7 @@ export default function App() {
                           </div>
 
                           <div className="bg-[#8A1538]/5 p-5 rounded-2xl border border-[#8A1538]/20 focus-within:ring-2 focus-within:ring-[#8A1538] transition-all">
-                            <label className="font-black text-[#8A1538] block mb-2 text-sm flex items-center"><DollarSign className="w-4 h-4 mr-1"/>3. 임시 투자 금액 (제출 전 수정 가능)</label>
+                            <label className="font-black text-[#8A1538] block mb-2 text-sm flex items-center"><DollarSign className="w-4 h-4 mr-1"/>3. 임시 가치 산정 (만원)</label>
                             <div className="flex items-center bg-white rounded-xl overflow-hidden border border-[#8A1538]/30">
                               <input 
                                 type="text" inputMode="numeric"
