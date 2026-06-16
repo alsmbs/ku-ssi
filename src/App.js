@@ -70,7 +70,7 @@ export default function App() {
   const [submissionsList, setSubmissionsList] = useState([]);
   const [activeUsers, setActiveUsers] = useState({}); 
   const [expandedTeam, setExpandedTeam] = useState(null); 
-  const [expandedStudent, setExpandedStudent] = useState(null); 
+  const [expandedStudents, setExpandedStudents] = useState({}); 
 
   const [evaluations, setEvaluations] = useState(
     Array.from({ length: 9 }, (_, i) => ({ 
@@ -636,9 +636,19 @@ export default function App() {
                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
                       <div className="flex justify-between items-center mb-6">
                         <div>
-                          <h3 className="text-lg font-bold flex items-center"><Eye className="w-5 h-5 mr-2 text-blue-600"/> 학생별 활동 내역 (X-Ray)</h3>
+                          <h3 className="text-lg font-bold flex items-center"><Eye className="w-5 h-5 mr-2 text-blue-600"/> 실시간 현황 점검 (X-Ray)</h3>
                         </div>
                         <div className="flex gap-2">
+                          <button onClick={() => {
+                            const all = {};
+                            studentList.forEach(s => all[s.id] = true);
+                            setExpandedStudents(all);
+                          }} className="bg-gray-100 text-gray-700 hover:bg-gray-200 px-4 py-2 rounded-lg font-bold flex items-center text-sm border border-gray-200">
+                            <ChevronDown className="w-4 h-4 mr-1"/> 전체 펼치기
+                          </button>
+                          <button onClick={() => setExpandedStudents({})} className="bg-gray-100 text-gray-700 hover:bg-gray-200 px-4 py-2 rounded-lg font-bold flex items-center text-sm border border-gray-200">
+                            <ChevronUp className="w-4 h-4 mr-1"/> 전체 접기
+                          </button>
                           <button onClick={() => setModal({show: true, type: 'ALL', targetId: null, targetName: '', message: '테스트용으로 입력된 모든 학생의 제출 데이터를 완전히 삭제하고 초기화하시겠습니까?'})} className="bg-red-50 text-red-600 hover:bg-red-100 px-4 py-2 rounded-lg font-bold flex items-center text-sm border border-red-200">
                             <Trash2 className="w-4 h-4 mr-1"/> 전체 데이터 초기화
                           </button>
@@ -657,7 +667,7 @@ export default function App() {
                               <th className="p-3">현재 화면위치</th>
                               <th className="p-3">최근 저장 시간</th>
                               <th className="p-3 text-center">개별 리셋</th>
-                              <th className="p-3 text-right">답안 보기</th>
+                              <th className="p-3 text-right">현황 점검</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-gray-100">
@@ -676,28 +686,28 @@ export default function App() {
 
                               return (
                                 <React.Fragment key={s.id}>
-                                  <tr className="hover:bg-gray-50 transition cursor-pointer">
-                                    <td className="p-3" onClick={() => setExpandedStudent(expandedStudent === s.id ? null : s.id)}>{statusUI}</td>
-                                    <td className="p-3 font-bold" onClick={() => setExpandedStudent(expandedStudent === s.id ? null : s.id)}>
+                                  <tr className="hover:bg-gray-50 transition cursor-pointer" onClick={() => setExpandedStudents(prev => ({...prev, [s.id]: !prev[s.id]}))}>
+                                    <td className="p-3">{statusUI}</td>
+                                    <td className="p-3 font-bold">
                                       <span className="font-mono text-gray-400 font-normal mr-2">{s.id}</span>
                                       {s.name} <span className="text-xs text-[#8A1538] bg-[#8A1538]/10 px-1 rounded ml-1">{s.team}팀</span>
                                     </td>
-                                    <td className="p-3 font-bold text-gray-600" onClick={() => setExpandedStudent(expandedStudent === s.id ? null : s.id)}>
+                                    <td className="p-3 font-bold text-gray-600">
                                       {isSub ? '-' : phaseText}
                                     </td>
-                                    <td className="p-3 text-xs text-gray-500 font-mono" onClick={() => setExpandedStudent(expandedStudent === s.id ? null : s.id)}>{timeStr}</td>
+                                    <td className="p-3 text-xs text-gray-500 font-mono">{timeStr}</td>
                                     <td className="p-3 text-center">
                                       <button onClick={(e) => { e.stopPropagation(); setModal({show: true, type: 'STUDENT', targetId: s.id, targetName: s.name, message: `${s.name} 학생의 작성 내용을 완전히 삭제하고 재입력 가능하게 초기화하시겠습니까?`})}} className="text-gray-500 hover:text-red-600 hover:bg-red-50 p-1.5 rounded transition">
                                         <RefreshCw className="w-4 h-4"/>
                                       </button>
                                     </td>
                                     <td className="p-3 text-right">
-                                      <button onClick={() => setExpandedStudent(expandedStudent === s.id ? null : s.id)} className="text-blue-600 font-bold text-xs bg-blue-100 px-3 py-1.5 rounded-full hover:bg-blue-200 transition">
-                                        {expandedStudent === s.id ? '닫기' : '엿보기'}
+                                      <button className="text-blue-600 font-bold text-xs bg-blue-100 px-3 py-1.5 rounded-full hover:bg-blue-200 transition">
+                                        {expandedStudents[s.id] ? '닫기' : '현황 점검'}
                                       </button>
                                     </td>
                                   </tr>
-                                  {expandedStudent === s.id && (
+                                  {expandedStudents[s.id] && (
                                     <tr>
                                       <td colSpan="6" className="p-0 border-b-2 border-blue-200">
                                         <div className="bg-gray-800 p-6 shadow-inner">
@@ -965,6 +975,7 @@ export default function App() {
                                     <div className="flex items-center">
                                       <span className="font-black text-lg text-gray-800">{num}팀</span>
                                       <span className="text-sm text-gray-500 ml-2 font-bold">{teamInfo.name}</span>
+                                      <span className="hidden md:inline-block text-xs text-gray-400 ml-2 font-medium bg-gray-50 px-2 py-0.5 rounded border border-gray-200">"{teamInfo.desc}"</span>
                                     </div>
                                     <div className="text-xs font-bold text-gray-500 mt-2 flex flex-col gap-1 bg-gray-50 p-2 rounded-lg border border-gray-100">
                                       <div className="flex items-center gap-2"><span className="text-gray-600 font-normal">Problem (문제)</span><span className="text-[#8A1538] ml-auto">{prevEval.problem||0}점</span></div>
